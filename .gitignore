@@ -27,3 +27,13 @@ node_modules/
 # OS files
 .DS_Store
 Thumbs.db
+
+
+.vscode/
+.idea/
+*.pyc
+__pycache__/
+venv/
+.env
+node_modules/
+uvicorn.log
