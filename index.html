@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Safe Terminal — sandbox (updated)</title>
+<style>
+  /* Reset / base */
+  *, *::before, *::after { box-sizing: border-box; }
+  html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:#0f172a;background:linear-gradient(180deg,#eef2ff 0%, #f6f7fb 60%);}
+  :root{
+    --bg: #f6f7fb;
+    --card-bg: rgba(255,255,255,0.85);
+    --muted: #6b7280;
+    --accent: #5579ff;
+    --accent-2: #7de0b3;
+    --terminal-bg: #0b1220;
+    --terminal-fg: #8cff9f;
+    --shadow: 0 10px 30px rgba(20,24,40,0.08);
+    --radius: 12px;
+    --gap: 16px;
+  }
+  /* Layout */
+  .container{max-width:1200px;margin:24px auto;padding:18px;display:grid;grid-template-columns:1fr 340px;gap:var(--gap);align-items:start}
+  @media (max-width:1000px){ .container{grid-template-columns:1fr;padding:12px} }
+  .card{background:var(--card-bg);backdrop-filter: blur(6px);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .logo{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),#9fe0ff);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:18px}
+  h1{font-size:18px;margin:0}
+  p.lead{margin:0;color:var(--muted);font-size:13px}
+  /* Terminal */
+  .terminal{display:flex;flex-direction:column;min-height:420px;height:calc(100%);gap:12px}
+  .term-output{flex:1;background:var(--terminal-bg);color:var(--terminal-fg);padding:12px;border-radius:10px;overflow:auto;white-space:pre-wrap;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;font-size:13px;position:relative;display:flex;flex-direction:column;gap:8px}
+  #historyLines{display:flex;flex-direction:column;gap:6px}
+  .prompt-row{display:flex;align-items:center;gap:8px;margin-top:4px}
+  .prompt-prefix{color:#6ce0a0;min-width:20px}
+  .prompt-input{flex:1;background:transparent;border:0;outline:none;color:var(--terminal-fg);font-family:inherit;font-size:13px;padding:6px 8px;border-radius:6px}
+  .prompt-input::placeholder{color:rgba(140,255,159,0.45)}
+  /* Command top bar */
+  .cmd-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+  .cmd-input{flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(12,18,35,0.06);font-family:inherit;font-size:14px;background:white}
+  .btn{background:linear-gradient(180deg,var(--accent), #466bff);color:white;padding:10px 12px;border-radius:10px;border:0;cursor:pointer;box-shadow:0 6px 18px rgba(76,93,255,0.16)}
+  .btn.secondary{background:transparent;color:#0b1220;border:1px solid rgba(12,18,35,0.06);box-shadow:none}
+  .btn.ghost{background:transparent;color:var(--muted);border:0}
+  /* Right panel */
+  .panel{display:flex;flex-direction:column;gap:12px;height:auto;min-height:420px}
+  .panel .box{padding:12px;border-radius:10px;background:linear-gradient(180deg,#fff,#fbfdff);box-shadow:var(--shadow);font-size:13px}
+  .small{font-size:12px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;max-height:170px;overflow:auto;padding-right:6px}
+  .chip{display:inline-block;background:#eef2ff;color:#11358b;padding:6px 9px;border-radius:999px;font-size:12px;cursor:pointer;user-select:none}
+  /* Suggestions dropdown */
+  .suggestions{position:absolute;background:#fff;border-radius:8px;border:1px solid rgba(12,18,35,0.06);box-shadow:0 10px 30px rgba(12,18,35,0.08);z-index:60;max-height:220px;overflow:auto}
+  .suggestions div{padding:8px 10px;cursor:pointer}
+  .suggestions div:hover,.suggestions .active{background:#f1f5ff}
+  /* helpers */
+  .controls-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+  footer{grid-column:1 / -1;margin-top:8px;text-align:center;color:var(--muted);font-size:13px}
+  /* responsive tweaks */
+  @media (max-width:600px){ .prompt-input, .cmd-input{font-size:14px} .terminal{min-height:320px} }
+  code { background: rgba(255,255,255,0.06); padding:2px 6px; border-radius:4px; font-size:90%; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <header>
+      <div class="logo">ST</div>
+      <div>
+        <h1>Safe Terminal — sandbox</h1>
+        <p class="lead">A small set of safe commands. All file ops are contained in <code>sandbox/</code>.</p>
+      </div>
+    </header>
+
+    <div class="terminal" id="terminalRoot">
+      <div id="output" class="term-output" aria-live="polite">
+        <div id="historyLines">
+          <!-- restored welcome message with examples -->
+          <div>Welcome — type a command (e.g., <code>ls</code>, <code>mkdir demo</code>, <code>echo hello</code>, <code>cat filename</code>). Use <code>help</code> or press <strong>Stats</strong>.</div>
+        </div>
+
+        <!-- inline prompt -->
+        <div id="inlinePrompt" class="prompt-row" style="margin-top:6px; position:relative;">
+          <span class="prompt-prefix">&gt;</span>
+          <input id="promptInput" class="prompt-input" placeholder="Type a command and press Enter (Ctrl+C to kill)" autocomplete="off" spellcheck="false" />
+          <div id="promptSuggest" class="suggestions" style="display:none;bottom:48px;left:12px;right:12px;"></div>
+        </div>
+      </div>
+
+      <div class="cmd-row" style="margin-top:8px">
+        <div style="flex:1;position:relative" class="dropdown">
+          <input id="cmd" class="cmd-input" placeholder="Enter command (Tab to autocomplete, Ctrl+Enter to run)" autocomplete="off" spellcheck="false" />
+          <div id="suggest" class="suggestions" style="display:none;top:46px;left:12px;right:12px;"></div>
+        </div>
+
+        <button id="runBtn" class="btn" title="Run (Ctrl+Enter)">Run</button>
+        <button id="statsBtn" class="btn secondary" title="Get system stats">Stats</button>
+        <button id="clearBtn" class="btn ghost" title="Clear output">Clear</button>
+      </div>
+
+      <div class="controls-row">
+        <button id="copyBtn" class="btn secondary">Copy Output</button>
+        <button id="downloadBtn" class="btn secondary">Download Log</button>
+        <div style="margin-left:auto" class="small">Shortcuts: <kbd>↑</kbd>/<kbd>↓</kbd> history, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> run, <kbd>Ctrl</kbd>+<kbd>C</kbd> kill</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="box">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div class="small">Allowed commands</div>
+          <div class="small" style="margin-top:6px;color:var(--muted)">Tip: type to filter, Tab to autocomplete</div>
+        </div>
+        <div class="small" id="sandboxPath">sandbox</div>
+      </div>
+
+      <div class="chips" id="chipsContainer" aria-hidden="false"></div>
+    </div>
+
+    <div class="box">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div><strong>System stats</strong><div class="small">Click Stats to refresh</div></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="refreshStats" class="btn secondary">Refresh</button>
+        </div>
+      </div>
+      <pre id="statsPre" style="margin-top:10px;background:#fbfff9;padding:8px;border-radius:8px;white-space:pre-wrap;min-height:72px">—</pre>
+    </div>
+
+    <div class="box small">
+      <strong>Help</strong>
+      <p style="margin:8px 0;color:var(--muted)">This UI sends commands to the safe backend. Dangerous commands are blocked and paths are constrained to <code>sandbox/</code>.</p>
+      <div style="display:flex;gap:8px">
+        <button id="helpBtn" class="btn secondary">Show Help</button>
+        <button id="openSandbox" class="btn secondary">Open sandbox folder</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="small">Built for CodeMate Hackathon — demo-ready. Replace files in <code>sandbox/</code> to test read/write.</footer>
+</div>
+
+<script>
+/* Helper and UI logic (updated) */
+const ALLOWED = [
+  "ls","dir","pwd","cat","type","read","echo","mkdir","rmdir","touch","stat",
+  "whoami","uname","df","du","ps","stats","help",
+  "cd","write","append","rm","mv","cp","restore","empty-trash",
+  "head","tail","grep","find","tree","wc","md5","sha256"
+];
+
+const historyLines = document.getElementById('historyLines');
+const promptInput = document.getElementById('promptInput');
+const promptSuggest = document.getElementById('promptSuggest');
+const cmdInput = document.getElementById('cmd');
+const suggest = document.getElementById('suggest');
+const runBtn = document.getElementById('runBtn');
+const clearBtn = document.getElementById('clearBtn');
+const statsBtn = document.getElementById('statsBtn');
+const refreshStatsBtn = document.getElementById('refreshStats');
+const statsPre = document.getElementById('statsPre');
+const helpBtn = document.getElementById('helpBtn');
+const copyBtn = document.getElementById('copyBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+const openSandbox = document.getElementById('openSandbox');
+const sandboxPath = document.getElementById('sandboxPath');
+const chipsContainer = document.getElementById('chipsContainer');
+const terminalRoot = document.getElementById('terminalRoot');
+
+let log = JSON.parse(localStorage.getItem('sterm_log_v1') || "[]");
+let history = JSON.parse(localStorage.getItem('sterm_history_v1') || "[]");
+let hi = history.length;
+
+/* Render chips */
+function renderChips(){
+  chipsContainer.innerHTML = '';
+  ALLOWED.forEach(c => {
+    const el = document.createElement('span');
+    el.className = 'chip';
+    el.textContent = c;
+    el.onclick = () => { cmdInput.value = c + (c==='cat' || c==='read' ? ' ' : ''); cmdInput.focus(); updateTopSuggestions(); };
+    chipsContainer.appendChild(el);
+  });
+}
+renderChips();
+
+/* Append a timestamped line to the terminal history */
+function appendRawLine(text){
+  const ts = new Date().toLocaleTimeString();
+  const node = document.createElement('div');
+  node.textContent = `[${ts}] ${text}`;
+  historyLines.appendChild(node);
+  historyLines.parentElement.scrollTop = historyLines.parentElement.scrollHeight;
+}
+
+/* API call helper */
+async function callApi(command){
+  try {
+    const resp = await fetch('/api/command', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({command})
+    });
+    return await resp.json();
+  } catch(err){
+    return {ok:false, stderr: 'Network error: ' + (err.message || err)};
+  }
+}
+
+/* Single runCommand implementation:
+   - always shows the command with a '> ' prefix first
+   - intercepts plain 'clear' on client only (clears display, sandbox untouched)
+*/
+async function runCommand(raw){
+  if(!raw) return;
+  const trimmed = raw.trim();
+
+  // Client-side clear should fully clear the visible display
+  if (trimmed === "clear") {
+    // Clear the visible output completely (no info lines)
+    historyLines.innerHTML = "";
+    // update local UI focus
+    promptInput.focus();
+    // save a minimal entry to log (so downloaded log still has the command)
+    const now = new Date().toISOString();
+    log.push({cmd: raw, stdout: "", stderr: "", time: now});
+    localStorage.setItem('sterm_log_v1', JSON.stringify(log));
+    history.push(raw); if(history.length>200) history.shift(); localStorage.setItem('sterm_history_v1', JSON.stringify(history));
+    hi = history.length;
+    return;
+  }
+
+  // For other commands: show command, send to server, then show output
+  appendRawLine('> ' + raw);
+  const res = await callApi(raw);
+  const now = new Date().toISOString();
+  if(res.stdout) appendRawLine(res.stdout);
+  if(res.stderr) appendRawLine('[stderr] ' + res.stderr);
+  if(!res.stdout && !res.stderr) appendRawLine('[no output]');
+  log.push({cmd:raw,stdout:res.stdout||"",stderr:res.stderr||"",time:now});
+  localStorage.setItem('sterm_log_v1', JSON.stringify(log));
+  history.push(raw); if(history.length>200) history.shift(); localStorage.setItem('sterm_history_v1', JSON.stringify(history));
+  hi = history.length;
+}
+
+/* Kill endpoint helper */
+async function sendKill(){
+  try {
+    const resp = await fetch('/api/kill', {method:'POST'});
+    const j = await resp.json();
+    if(j.ok) appendRawLine('[info] Kill signal sent to running process');
+    else appendRawLine('[stderr] ' + (j.stderr || 'Kill failed'));
+  } catch(e){
+    appendRawLine('[stderr] Kill request failed: ' + (e.message || e));
+  }
+}
+
+/* intercept Ctrl+C for killing server process */
+function interceptCtrlC(e){
+  if(e.ctrlKey && (e.key === 'c' || e.key === 'C')){
+    e.preventDefault(); e.stopPropagation();
+    sendKill();
+    return true;
+  }
+  return false;
+}
+
+/* Suggestions and history (minimal for this patch) */
+function updateTopSuggestions(){
+  const val = cmdInput.value.trim();
+  const filtered = ALLOWED.filter(c => c.startsWith(val.toLowerCase()));
+  if(val === "" || filtered.length === 0){
+    suggest.style.display = 'none';
+    return;
+  }
+  suggest.innerHTML = '';
+  filtered.forEach(s => {
+    const d = document.createElement('div');
+    d.textContent = s;
+    d.addEventListener('click', ()=> { cmdInput.value = s + (s==='cat' || s==='read' ? ' ' : ''); suggest.style.display='none'; cmdInput.focus(); });
+    suggest.appendChild(d);
+  });
+  suggest.style.display = 'block';
+}
+
+cmdInput.addEventListener('input', updateTopSuggestions);
+cmdInput.addEventListener('keydown', (e) => {
+  if(interceptCtrlC(e)) return;
+  if(e.key === 'Enter'){ e.preventDefault(); const v = cmdInput.value.trim(); if(!v) return; cmdInput.value=''; runCommand(v); }
+  if(e.key === 'Tab'){ e.preventDefault(); const val = cmdInput.value.trim(); const filtered = ALLOWED.filter(c => c.startsWith(val.toLowerCase())); if(filtered.length) cmdInput.value = filtered[0] + (filtered[0]==='cat' || filtered[0]==='read' ? ' ' : ''); suggest.style.display='none'; }
+});
+
+/* Inline prompt behavior */
+promptInput.addEventListener('keydown', async (e) => {
+  if(interceptCtrlC(e)) return;
+  if(e.key === 'Enter'){ e.preventDefault(); const v = promptInput.value.trim(); if(!v) return; promptInput.value=''; await runCommand(v); }
+  if(e.key === 'Tab'){ e.preventDefault(); const val = promptInput.value.trim(); const filtered = ALLOWED.filter(c => c.startsWith(val.toLowerCase())); if(filtered.length) promptInput.value = filtered[0] + (filtered[0]==='cat' || filtered[0]==='read' ? ' ' : ''); }
+});
+
+/* Allow clicking the terminal area to focus the inline prompt, and clicking top bar to focus cmd input */
+document.querySelector('.term-output').addEventListener('click', ()=> promptInput.focus());
+document.querySelector('.cmd-row').addEventListener('click', ()=> cmdInput.focus());
+
+/* Global shortcut: Ctrl+Enter runs the focused input (cmd or inline prompt) */
+document.addEventListener('keydown', async (e) => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+    // prevent default browser behaviors
+    e.preventDefault();
+    const active = document.activeElement;
+    if(active === cmdInput){ const v = cmdInput.value.trim(); if(!v) return; cmdInput.value=''; runCommand(v); }
+    else if(active === promptInput){ const v = promptInput.value.trim(); if(!v) return; promptInput.value=''; await runCommand(v); }
+    else {
+      // default: run cmdInput if it has value
+      const v = cmdInput.value.trim() || promptInput.value.trim();
+      if(!v) return;
+      if(cmdInput.value.trim()){ cmdInput.value=''; runCommand(v); }
+      else { promptInput.value=''; await runCommand(v); }
+    }
+  }
+});
+
+/* Buttons */
+runBtn.addEventListener('click', ()=> { const v = cmdInput.value.trim(); if(!v) return; cmdInput.value=''; runCommand(v); });
+clearBtn.addEventListener('click', ()=> { historyLines.innerHTML = ""; });
+// Note: statsBtn still triggers a full command run (same as pressing Stats)
+statsBtn.addEventListener('click', async ()=> { await runCommand('stats'); });
+helpBtn.addEventListener('click', async ()=> { await runCommand('help'); });
+copyBtn.addEventListener('click', async ()=> { try{ await navigator.clipboard.writeText(historyLines.textContent); appendRawLine('[info] Copied output to clipboard'); } catch(e){ appendRawLine('[stderr] Copy failed: ' + (e.message||e)); }});
+downloadBtn.addEventListener('click', ()=> { const data = JSON.stringify(log,null,2); const blob = new Blob([data], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='sterm_log.json'; a.click(); URL.revokeObjectURL(url); appendRawLine('[info] Downloaded log');});
+openSandbox.addEventListener('click', ()=> appendRawLine('[info] Sandbox folder is on server under project/sandbox/.'));
+
+/* ----- NEW: Refresh stats button handler (works) ----- */
+refreshStatsBtn.addEventListener('click', async (e) => {
+  // Visual feedback
+  const prev = refreshStatsBtn.textContent;
+  refreshStatsBtn.textContent = 'Loading...';
+  refreshStatsBtn.disabled = true;
+  statsPre.textContent = 'Loading system stats...';
+  try {
+    const res = await callApi('stats');
+    if (res && res.ok && res.stdout) {
+      statsPre.textContent = res.stdout;
+    } else if (res && res.stderr) {
+      statsPre.textContent = '[stderr] ' + res.stderr;
+    } else {
+      statsPre.textContent = '[no output]';
+    }
+  } catch (err) {
+    statsPre.textContent = '[error] ' + (err.message || err);
+  } finally {
+    refreshStatsBtn.textContent = prev;
+    refreshStatsBtn.disabled = false;
+  }
+});
+
+/* Init: load history/log and fetch pwd & stats */
+(async function init(){
+  history = JSON.parse(localStorage.getItem('sterm_history_v1') || "[]");
+  log = JSON.parse(localStorage.getItem('sterm_log_v1') || "[]");
+  hi = history.length;
+  try { const pwdResp = await callApi('pwd'); if(pwdResp.stdout) sandboxPath.textContent = pwdResp.stdout.trim(); } catch(e){}
+  try { const statsResp = await callApi('stats'); if(statsResp.stdout) statsPre.textContent = statsResp.stdout; } catch(e){}
+  // focus the cmd input by default so user can type there immediately
+  cmdInput.focus();
+})();
+</script>
+</body>
+</html>
